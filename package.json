@@ -3,6 +3,8 @@
   "displayName": "hex-nibble-highlight",
   "description": "Highlight hex literals by 4-digit(1byte)",
   "version": "0.0.1",
+  "publisher": "Delcoii",
+
   "engines": {
     "vscode": "^1.116.0"
   },
