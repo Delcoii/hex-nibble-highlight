@@ -13,3 +13,7 @@ vsc-extension-quickstart.md
 .git/**
 node_modules/**
 *.vsix
+
+test.c
+out/extension copy.js
+out/test/**

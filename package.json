@@ -2,6 +2,7 @@
   "name": "hex-nibble-highlight",
   "displayName": "hex-nibble-highlight",
   "description": "Highlight hex literals by 4-digit(1byte)",
+  "icon": "images/icon.png",
   "version": "0.0.1",
   "publisher": "Delcoii",
 
