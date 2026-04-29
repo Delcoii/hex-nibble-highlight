@@ -1,9 +1,31 @@
+#include <stdio.h>
 #include <stdint.h>
 
-#define REG_BASE       0x40000000
-#define MASK_VALUE     0xFFFF0000
-#define MAGIC_VALUE    0xDEADBEEF
-#define LONG_VALUE     0x12345678ABCDEF00ULL
-#define LOWER_VALUE    0xffffabcd12345678u
+#define LONG_VALUE         0x345678ABCDEF00ULL
+#define LOWER_VALUE        0xffffabcd12345678u
+#define START              (0x000000UL)
+#define RAM                (0x558124F8UL)
+#define ADDR_START         (0xABCD820000UL)
+#define HEADER_START       (0xBBBBBBBBBBBBBBBBB820200UL)
 
-uint32_t value = 0xA5A55A5A;
+
+int main(void) {
+    unsigned int value = 0xA5A55A5A;
+    uint8_t val = 0x11;
+
+    const uint8_t data[] = {
+        0x00,0x20,0x00,0x18, 0x07,0x80,0x00,0x60, 0x00,0x01,0x00,0x07, 0x02,0xD0,0x00,0x03,
+        0x00,0x00,0x00,0x00, 0x81,0x11,0x11,0x11, 0x09,0x60,0x02,0x00, 0x00,0x20,0x00,0x18
+    };
+
+    // This should not be highlighted: 0xAAAAAAAA
+
+    /*
+    This should not be highlighted: 0xBBBBBBBB
+    */
+
+    const char *s1 = "This is not a comment: // 0xCCCCCCCC";
+    const char *s2 = "This is not a comment: /* 0xDDDDDDDD */";
+
+    printf("val: 0x%08X -> 0x00000000000000", value);
+}
