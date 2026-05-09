@@ -3,8 +3,12 @@
   "displayName": "hex-nibble-highlight",
   "description": "Highlight hex literals by 4-digit(1byte)",
   "icon": "images/icon.png",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "Delcoii",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Delcoii/hex-nibble-highlight"
+  },
 
   "engines": {
     "vscode": "^1.116.0"
