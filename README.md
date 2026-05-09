@@ -1,7 +1,7 @@
 # HEX Nibble Highlighter
 
-Highlights C/C++ hexadecimal integer literals in 4-digit groups (per byte)
-
+### Highlights C/C++ hexadecimal integer literals in 4-digit groups (per byte)
+![HEX nibble highlight example](images/example_nibble.png)
 
 ## Features
 - Supports C and C++ files
