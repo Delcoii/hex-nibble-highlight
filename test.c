@@ -1,31 +1,60 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#define LONG_VALUE         0x345678ABCDEF00ULL
-#define LOWER_VALUE        0xffffabcd12345678u
-#define START              (0x000000UL)
-#define RAM                (0x558124F8UL)
-#define ADDR_START         (0xABCD820000UL)
-#define HEADER_START       (0xBBBBBBBBBBBBBBBBB820200UL)
+// Active code: should be nibble-highlighted normally.
+static const uint64_t kActiveA = 0x1122334455667788ULL;
+static const uint64_t kActiveB = 0xDEADBEEF00ABCDEFULL;
 
+#if 0
+// Inactive code: should be gray and NOT nibble-highlighted by this extension.
+static const uint64_t kInactiveTop = 0xAAAABBBBCCCCDDDDULL;
+static const uint32_t kInactiveTop2 = 0x89ABCDEFU;
+
+#if 1
+// Nested inside inactive parent: still inactive (gray).
+static const uint32_t kNestedInInactive = 0x12345678U;
+#endif
+
+#else
+// Active alternative branch: should be nibble-highlighted.
+static const uint32_t kElseActive = 0x01020304U;
+#endif
+
+#if (1 && (3 > 2))
+// Active branch from evaluatable expression.
+static const uint32_t kExprActive = 0xCAFEBABEU;
+#elif 1
+// Not taken because previous branch is true.
+static const uint32_t kExprElifInactive = 0x0BADF00DU;
+#else
+// Not taken.
+static const uint32_t kExprElseInactive = 0xFEEDFACEU;
+#endif
+
+#if 1
+static const uint32_t kNestedParentActive = 0x77778888U;
+
+#if 0
+// Inactive nested child.
+static const uint32_t kNestedChildInactive = 0x11112222U;
+#else
+// Active nested child.
+static const uint32_t kNestedChildActive = 0x33334444U;
+#endif
+
+#endif
 
 int main(void) {
-    unsigned int value = 0xA5A55A5A;
-    uint8_t val = 0x11;
+    uint32_t value = 0xA5A55A5AU;
 
-    const uint8_t data[] = {
-        0x00,0x20,0x00,0x18, 0x07,0x80,0x00,0x60, 0x00,0x01,0x00,0x07, 0x02,0xD0,0x00,0x03,
-        0x00,0x00,0x00,0x00, 0x81,0x11,0x11,0x11, 0x09,0x60,0x02,0x00, 0x00,0x20,0x00,0x18
-    };
+    // These in comments should remain uncolored by nibble decoration.
+    // 0xAAAAAAAA
+    /* 0xBBBBBBBB */
 
-    // This should not be highlighted: 0xAAAAAAAA
+    // These in strings should still be matched by current extension behavior.
+    const char *s1 = "0xCCCCCCCC in string";
+    const char *s2 = "0xDDDDDDDD in string";
 
-    /*
-    This should not be highlighted: 0xBBBBBBBB
-    */
-
-    const char *s1 = "This is not a comment: // 0xCCCCCCCC";
-    const char *s2 = "This is not a comment: /* 0xDDDDDDDD */";
-
-    printf("val: 0x%08X -> 0x00000000000000", value);
+    printf("value = 0x%08X, %s, %s\n", value, s1, s2);
+    return 0;
 }

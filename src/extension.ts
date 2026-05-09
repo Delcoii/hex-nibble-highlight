@@ -1,10 +1,18 @@
 import * as vscode from 'vscode';
 
-let decorations: vscode.TextEditorDecorationType[] = [];
+let nibbleDecorations: vscode.TextEditorDecorationType[] = [];
+let inactiveCodeDecoration: vscode.TextEditorDecorationType | undefined;
 
 type OffsetRange = {
     start: number;
     end: number;
+};
+
+type ConditionalFrame = {
+    parentActive: boolean;
+    parentResolvable: boolean;
+    anyBranchTaken: boolean;
+    known: boolean;
 };
 
 
@@ -43,9 +51,11 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     function createDecorations(): void {
-        for (const decoration of decorations) {
+        for (const decoration of nibbleDecorations) {
             decoration.dispose();
         }
+
+        inactiveCodeDecoration?.dispose();
 
         const colors = isLightTheme()
             ? [
@@ -61,19 +71,27 @@ export function activate(context: vscode.ExtensionContext) {
                 '#AB9DF2'  // Purple for dark themes
             ];
 
-        decorations = colors.map(color =>
+        nibbleDecorations = colors.map(color =>
             vscode.window.createTextEditorDecorationType({
                 color
             })
         );
+
+        inactiveCodeDecoration = vscode.window.createTextEditorDecorationType({
+            color: isLightTheme() ? 'rgba(0, 0, 0, 0.35)' : 'rgba(190, 190, 190, 0.45)'
+        });
     }
 
     createDecorations();
 
 
     function clearDecorations(editor: vscode.TextEditor): void {
-        for (const decoration of decorations) {
+        for (const decoration of nibbleDecorations) {
             editor.setDecorations(decoration, []);
+        }
+
+        if (inactiveCodeDecoration) {
+            editor.setDecorations(inactiveCodeDecoration, []);
         }
     }
 
@@ -210,6 +228,349 @@ export function activate(context: vscode.ExtensionContext) {
         return false;
     }
 
+    function isIdentifier(token: string): boolean {
+        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(token);
+    }
+
+    function parseIntegerToken(token: string): number {
+        if (/^0[xX][0-9a-fA-F]+$/.test(token)) {
+            return Number.parseInt(token, 16);
+        }
+
+        if (/^0[0-7]+$/.test(token)) {
+            return Number.parseInt(token, 8);
+        }
+
+        return Number.parseInt(token, 10);
+    }
+
+    function evaluateIfExpression(expression: string): boolean | null {
+        const sanitized = expression
+            .replace(/\/\*.*?\*\//g, ' ')
+            .replace(/\/\/.*$/g, '')
+            .trim();
+
+        if (!sanitized) {
+            return null;
+        }
+
+        const tokenRegex = /\s+|0[xX][0-9a-fA-F]+|[0-9]+|&&|\|\||==|!=|<=|>=|[()!<>]|[A-Za-z_][A-Za-z0-9_]*/g;
+        const rawTokens = sanitized.match(tokenRegex);
+
+        if (!rawTokens) {
+            return null;
+        }
+
+        const tokens = rawTokens.filter(token => !/^\s+$/.test(token));
+
+        if (tokens.join('') !== sanitized.replace(/\s+/g, '')) {
+            return null;
+        }
+
+        let cursor = 0;
+
+        function peek(): string | undefined {
+            return tokens[cursor];
+        }
+
+        function consume(expected: string): boolean {
+            if (tokens[cursor] === expected) {
+                cursor++;
+                return true;
+            }
+
+            return false;
+        }
+
+        function parsePrimary(): number | null {
+            const token = peek();
+
+            if (!token) {
+                return null;
+            }
+
+            if (consume('(')) {
+                const inner = parseOr();
+
+                if (!consume(')')) {
+                    return null;
+                }
+
+                return inner;
+            }
+
+            if (isIdentifier(token)) {
+                cursor++;
+
+                // Without full macro context, identifier-based expressions are unknown.
+                return null;
+            }
+
+            if (/^0[xX][0-9a-fA-F]+$/.test(token) || /^[0-9]+$/.test(token)) {
+                cursor++;
+                return parseIntegerToken(token);
+            }
+
+            return null;
+        }
+
+        function parseUnary(): number | null {
+            if (consume('!')) {
+                const value = parseUnary();
+
+                if (value === null) {
+                    return null;
+                }
+
+                return value === 0 ? 1 : 0;
+            }
+
+            return parsePrimary();
+        }
+
+        function parseRelational(): number | null {
+            let left = parseUnary();
+
+            while (true) {
+                const operator = peek();
+
+                if (!operator || !['<', '>', '<=', '>='].includes(operator)) {
+                    return left;
+                }
+
+                cursor++;
+                const right = parseUnary();
+
+                if (left === null || right === null) {
+                    return null;
+                }
+
+                switch (operator) {
+                    case '<':
+                        left = left < right ? 1 : 0;
+                        break;
+                    case '>':
+                        left = left > right ? 1 : 0;
+                        break;
+                    case '<=':
+                        left = left <= right ? 1 : 0;
+                        break;
+                    case '>=':
+                        left = left >= right ? 1 : 0;
+                        break;
+                }
+            }
+        }
+
+        function parseEquality(): number | null {
+            let left = parseRelational();
+
+            while (true) {
+                const operator = peek();
+
+                if (!operator || !['==', '!='].includes(operator)) {
+                    return left;
+                }
+
+                cursor++;
+                const right = parseRelational();
+
+                if (left === null || right === null) {
+                    return null;
+                }
+
+                left = operator === '=='
+                    ? (left === right ? 1 : 0)
+                    : (left !== right ? 1 : 0);
+            }
+        }
+
+        function parseAnd(): number | null {
+            let left = parseEquality();
+
+            while (consume('&&')) {
+                const right = parseEquality();
+
+                if (left === null || right === null) {
+                    return null;
+                }
+
+                left = (left !== 0 && right !== 0) ? 1 : 0;
+            }
+
+            return left;
+        }
+
+        function parseOr(): number | null {
+            let left = parseAnd();
+
+            while (consume('||')) {
+                const right = parseAnd();
+
+                if (left === null || right === null) {
+                    return null;
+                }
+
+                left = (left !== 0 || right !== 0) ? 1 : 0;
+            }
+
+            return left;
+        }
+
+        const parsedValue = parseOr();
+
+        if (parsedValue === null || cursor !== tokens.length) {
+            return null;
+        }
+
+        return parsedValue !== 0;
+    }
+
+    function getInactivePreprocessorRanges(doc: vscode.TextDocument): OffsetRange[] {
+        const inactiveRanges: OffsetRange[] = [];
+        const frameStack: ConditionalFrame[] = [];
+
+        let currentActive: boolean = true;
+        let currentResolvable: boolean = true;
+
+        for (let lineIndex = 0; lineIndex < doc.lineCount; lineIndex++) {
+            const line = doc.lineAt(lineIndex);
+            const directiveMatch = line.text.match(/^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$/);
+
+            if (!directiveMatch) {
+                if (!currentActive && currentResolvable && line.text.length > 0) {
+                    inactiveRanges.push({
+                        start: doc.offsetAt(new vscode.Position(lineIndex, 0)),
+                        end: doc.offsetAt(new vscode.Position(lineIndex, line.text.length))
+                    });
+                }
+
+                continue;
+            }
+
+            const directive = directiveMatch[1];
+            const expression = directiveMatch[2].trim();
+
+            if (directive === 'if' || directive === 'ifdef' || directive === 'ifndef') {
+                const parentActive: boolean = currentActive;
+                const parentResolvable: boolean = currentResolvable;
+
+                const frame: ConditionalFrame = {
+                    parentActive,
+                    parentResolvable,
+                    anyBranchTaken: false,
+                    known: true
+                };
+
+                if (!parentResolvable) {
+                    frame.known = false;
+                    currentActive = true;
+                    currentResolvable = false;
+                    frameStack.push(frame);
+                    continue;
+                }
+
+                let conditionValue: boolean | null;
+
+                if (!parentActive) {
+                    conditionValue = false;
+                } else if (directive === 'if') {
+                    conditionValue = evaluateIfExpression(expression);
+                } else {
+                    // #ifdef and #ifndef require macro knowledge. Keep this block unresolved.
+                    conditionValue = null;
+                }
+
+                if (directive === 'ifndef' && conditionValue !== null) {
+                    conditionValue = !conditionValue;
+                }
+
+                if (conditionValue === null) {
+                    frame.known = false;
+                    currentActive = true;
+                    currentResolvable = false;
+                } else {
+                    frame.anyBranchTaken = conditionValue;
+                    currentActive = parentActive && conditionValue;
+                    currentResolvable = true;
+                }
+
+                frameStack.push(frame);
+                continue;
+            }
+
+            if (directive === 'elif') {
+                const frame = frameStack[frameStack.length - 1];
+
+                if (!frame) {
+                    continue;
+                }
+
+                if (!frame.parentResolvable || !frame.known) {
+                    currentActive = true;
+                    currentResolvable = false;
+                    continue;
+                }
+
+                if (!frame.parentActive) {
+                    currentActive = false;
+                    currentResolvable = true;
+                    continue;
+                }
+
+                const conditionValue = evaluateIfExpression(expression);
+
+                if (conditionValue === null) {
+                    frame.known = false;
+                    currentActive = true;
+                    currentResolvable = false;
+                    continue;
+                }
+
+                const branchActive = !frame.anyBranchTaken && conditionValue;
+                frame.anyBranchTaken = frame.anyBranchTaken || conditionValue;
+
+                currentActive = frame.parentActive && branchActive;
+                currentResolvable = true;
+                continue;
+            }
+
+            if (directive === 'else') {
+                const frame = frameStack[frameStack.length - 1];
+
+                if (!frame) {
+                    continue;
+                }
+
+                if (!frame.parentResolvable || !frame.known) {
+                    currentActive = true;
+                    currentResolvable = false;
+                    continue;
+                }
+
+                const branchActive = frame.parentActive && !frame.anyBranchTaken;
+                frame.anyBranchTaken = true;
+
+                currentActive = branchActive;
+                currentResolvable = true;
+                continue;
+            }
+
+            if (directive === 'endif') {
+                const frame = frameStack.pop();
+
+                if (!frame) {
+                    continue;
+                }
+
+                currentActive = frame.parentActive;
+                currentResolvable = frame.parentResolvable;
+            }
+        }
+
+        return inactiveRanges;
+    }
+
     
     function update(editor: vscode.TextEditor | undefined): void {
         if (!editor) {
@@ -226,7 +587,8 @@ export function activate(context: vscode.ExtensionContext) {
         const text = doc.getText();
         // const rangesByColor: vscode.Range[][] = decorations.map(() => []);
         const commentRanges = getCommentRanges(text);
-        const rangesByColor: vscode.Range[][] = decorations.map(() => []);
+        const inactiveRanges = getInactivePreprocessorRanges(doc);
+        const rangesByColor: vscode.Range[][] = nibbleDecorations.map(() => []);
 
 
         /*
@@ -252,6 +614,10 @@ export function activate(context: vscode.ExtensionContext) {
             if (overlapsAnyRange(fullStartOffset, fullEndOffset, commentRanges)) {
                 continue;
             }
+
+            if (overlapsAnyRange(fullStartOffset, fullEndOffset, inactiveRanges)) {
+                continue;
+            }
             const digits = match[1];
             const digitStartOffset = fullStartOffset + 2;
             const digitEndOffset = digitStartOffset + digits.length;
@@ -267,7 +633,7 @@ export function activate(context: vscode.ExtensionContext) {
                 const startPos = doc.positionAt(start);
                 const endPos = doc.positionAt(end);
 
-                rangesByColor[colorIndex % decorations.length].push(
+                rangesByColor[colorIndex % nibbleDecorations.length].push(
                     new vscode.Range(startPos, endPos)
                 );
 
@@ -275,9 +641,17 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
-        decorations.forEach((decoration, index) => {
+        nibbleDecorations.forEach((decoration, index) => {
             editor.setDecorations(decoration, rangesByColor[index]);
         });
+
+        if (inactiveCodeDecoration) {
+            const inactiveVscodeRanges = inactiveRanges.map(range =>
+                new vscode.Range(doc.positionAt(range.start), doc.positionAt(range.end))
+            );
+
+            editor.setDecorations(inactiveCodeDecoration, inactiveVscodeRanges);
+        }
     }
 
     function updateActiveEditor(): void {
@@ -315,9 +689,12 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate(): void {
-    for (const decoration of decorations) {
+    for (const decoration of nibbleDecorations) {
         decoration.dispose();
     }
 
-    decorations = [];
+    inactiveCodeDecoration?.dispose();
+
+    nibbleDecorations = [];
+    inactiveCodeDecoration = undefined;
 }
