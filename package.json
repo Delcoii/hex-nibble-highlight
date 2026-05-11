@@ -3,7 +3,7 @@
   "displayName": "hex-nibble-highlight",
   "description": "Highlight hex literals by 4-digit(1byte)",
   "icon": "images/icon.png",
-  "version": "0.0.2",
+  "version": "0.0.1",
   "publisher": "Delcoii",
   "repository": {
     "type": "git",
@@ -11,7 +11,7 @@
   },
 
   "engines": {
-    "vscode": "^1.116.0"
+    "vscode": "^1.105.0"
   },
   "categories": [
     "Other"
@@ -38,7 +38,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.116.0",
+    "@types/vscode": "^1.105.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "typescript-eslint": "^8.56.1",
