@@ -3,6 +3,9 @@ import { disposeCopyDebugOutput, logCopyDebug, showCopyDebugOutput } from './cop
 import {
     clipboardSettleDelay,
     collectHexLiterals,
+    debugDumpClipboardToFile,
+    debugPasteAnchors,
+    debugVerifyWrittenClipboard,
     htmlHasNibbleHexPatch,
     normalizePlainText,
     patchCfHtmlHexColors,
@@ -709,16 +712,33 @@ export function activate(context: vscode.ExtensionContext) {
                 const allowedLiterals = new Set(
                     collectActiveHexLiterals(editor.document)
                 );
+                debugPasteAnchors(
+                    clipboard.html,
+                    plainRaw || plainText,
+                    'VS Code clipboard (before patch)'
+                );
+
                 const patchedHtml = patchCfHtmlHexColors(
                     clipboard.html,
                     nibbleColors,
                     allowedLiterals
                 );
 
+                debugPasteAnchors(
+                    patchedHtml,
+                    plainRaw || plainText,
+                    'after patch (before write)'
+                );
+
                 await writeRichClipboard(plainRaw || plainText, patchedHtml);
                 logCopyDebug(
                     `writeRichClipboard done hexInHtml=${htmlHasNibbleHexPatch(patchedHtml, nibbleColors)} htmlLen=${patchedHtml.length}`
                 );
+                await debugVerifyWrittenClipboard(
+                    patchedHtml.length,
+                    (plainRaw || plainText).length
+                );
+                await debugDumpClipboardToFile(patchedHtml, plainRaw || plainText);
                 showCopyDebugOutput();
                 return;
             }
