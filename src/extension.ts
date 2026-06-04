@@ -1,7 +1,12 @@
 import * as vscode from 'vscode';
+import { disposeCopyDebugOutput, logCopyDebug, showCopyDebugOutput } from './copyDebug';
 import {
     clipboardSettleDelay,
+    collectHexLiterals,
+    htmlHasNibbleHexPatch,
+    normalizePlainText,
     patchCfHtmlHexColors,
+    readPlainTextWithRetry,
     readRichClipboardWithRetry,
     writeRichClipboard,
 } from './richClipboard';
@@ -628,21 +633,41 @@ export function activate(context: vscode.ExtensionContext) {
         return spans;
     }
 
-    function getCopyRanges(editor: vscode.TextEditor): vscode.Range[] {
-        return editor.selections.map(selection => {
-            if (!selection.isEmpty) {
-                return selection;
+    function collectActiveHexLiterals(doc: vscode.TextDocument): string[] {
+        const text = doc.getText();
+        const commentRanges = getCommentRanges(text);
+        const inactiveRanges = getInactivePreprocessorRanges(doc);
+        const literals: string[] = [];
+        const regex = /0[xX]([0-9a-fA-F]+)([uUlL]*)/g;
+
+        let match: RegExpExecArray | null;
+
+        while ((match = regex.exec(text)) !== null) {
+            const fullStartOffset = match.index;
+            const fullEndOffset = regex.lastIndex;
+
+            if (overlapsAnyRange(fullStartOffset, fullEndOffset, commentRanges)) {
+                continue;
             }
 
-            const line = editor.document.lineAt(selection.start.line);
-            return line.rangeIncludingLineBreak;
-        });
+            if (overlapsAnyRange(fullStartOffset, fullEndOffset, inactiveRanges)) {
+                continue;
+            }
+
+            literals.push(match[0]);
+        }
+
+        return [...new Set(literals)];
     }
 
     async function copyWithHighlight(): Promise<void> {
+        logCopyDebug('--- copyWithHighlight start ---');
         const editor = vscode.window.activeTextEditor;
 
         if (!editor || !isSupportedDocument(editor.document)) {
+            logCopyDebug(
+                `skip: unsupported (editor=${Boolean(editor)} lang=${editor?.document.languageId ?? 'none'})`
+            );
             await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
             return;
         }
@@ -651,30 +676,69 @@ export function activate(context: vscode.ExtensionContext) {
             .getConfiguration('hex-nibble-highlight')
             .get<boolean>('richCopy', true);
 
+        logCopyDebug(
+            `lang=${editor.document.languageId} richCopy=${richCopyEnabled} nibbleColors=${nibbleColors.length} [${nibbleColors.join(', ')}]`
+        );
+
         if (!richCopyEnabled) {
+            logCopyDebug('richCopy disabled -> default copy');
             await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
             return;
+        }
+
+        if (nibbleColors.length === 0) {
+            logCopyDebug('WARN: nibbleColors empty');
         }
 
         try {
             await vscode.commands.executeCommand(
                 'editor.action.clipboardCopyWithSyntaxHighlightingAction'
             );
+            logCopyDebug('ran clipboardCopyWithSyntaxHighlightingAction');
             await clipboardSettleDelay();
 
             const clipboard = await readRichClipboardWithRetry();
+            const plainRaw = clipboard?.plain || (await readPlainTextWithRetry());
+            const plainText = normalizePlainText(plainRaw);
 
-            if (!clipboard?.html) {
-                // Syntax copy already on clipboard; do not overwrite with plain/fallback.
+            logCopyDebug(
+                `plain=${plainText.length} chars (raw ${plainRaw.length}) html=${clipboard?.html?.length ?? 0} literals=${collectHexLiterals(plainText).length}`
+            );
+
+            if (clipboard?.html && plainText) {
+                const allowedLiterals = new Set(
+                    collectActiveHexLiterals(editor.document)
+                );
+                const patchedHtml = patchCfHtmlHexColors(
+                    clipboard.html,
+                    nibbleColors,
+                    allowedLiterals
+                );
+
+                await writeRichClipboard(plainRaw || plainText, patchedHtml);
+                logCopyDebug(
+                    `writeRichClipboard done hexInHtml=${htmlHasNibbleHexPatch(patchedHtml, nibbleColors)} htmlLen=${patchedHtml.length}`
+                );
+                showCopyDebugOutput();
                 return;
             }
 
-            const patchedHtml = patchCfHtmlHexColors(clipboard.html, nibbleColors);
+            if (plainText) {
+                logCopyDebug(
+                    'WARN: no HTML on clipboard — keeping VS Code syntax copy (hex colors not applied)'
+                );
+                showCopyDebugOutput();
+                return;
+            }
 
-            await writeRichClipboard(clipboard.plain || '', patchedHtml);
+            logCopyDebug('WARN: no plain text on clipboard');
+            showCopyDebugOutput();
         } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            logCopyDebug(`ERROR: ${message}`);
             console.error('hex-nibble-highlight: rich clipboard failed', error);
             await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
+            showCopyDebugOutput();
         }
     }
 
@@ -760,6 +824,7 @@ export function deactivate(): void {
     }
 
     inactiveCodeDecoration?.dispose();
+    disposeCopyDebugOutput();
 
     nibbleDecorations = [];
     inactiveCodeDecoration = undefined;
