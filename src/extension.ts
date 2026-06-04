@@ -31,6 +31,9 @@ type HexColorSpan = {
 
 export function activate(context: vscode.ExtensionContext) {
     let nibbleColors: string[] = [];
+    const outputChannel = vscode.window.createOutputChannel('Hex Nibble Highlight');
+
+    context.subscriptions.push(outputChannel);
     /*
     // bold setting...
     decorations = [
@@ -689,7 +692,11 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
         } catch (error) {
-            console.error('hex-nibble-highlight: rich clipboard failed', error);
+            const message = error instanceof Error
+                ? (error.stack ?? error.message)
+                : String(error);
+
+            outputChannel.appendLine(`hex-nibble-highlight: rich clipboard failed: ${message}`);
             await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
         }
     }
