@@ -15,7 +15,6 @@ import {
 } from './richClipboard';
 
 let nibbleDecorations: vscode.TextEditorDecorationType[] = [];
-let inactiveCodeDecoration: vscode.TextEditorDecorationType | undefined;
 
 type OffsetRange = {
     start: number;
@@ -76,8 +75,6 @@ export function activate(context: vscode.ExtensionContext) {
             decoration.dispose();
         }
 
-        inactiveCodeDecoration?.dispose();
-
         const colors = isLightTheme()
             ? [
                 '#9a4a00', // Dark orange for light themes
@@ -100,9 +97,6 @@ export function activate(context: vscode.ExtensionContext) {
             })
         );
 
-        inactiveCodeDecoration = vscode.window.createTextEditorDecorationType({
-            color: isLightTheme() ? 'rgba(0, 0, 0, 0.35)' : 'rgba(190, 190, 190, 0.45)'
-        });
     }
 
     createDecorations();
@@ -113,9 +107,6 @@ export function activate(context: vscode.ExtensionContext) {
             editor.setDecorations(decoration, []);
         }
 
-        if (inactiveCodeDecoration) {
-            editor.setDecorations(inactiveCodeDecoration, []);
-        }
     }
 
     function isSupportedDocument(doc: vscode.TextDocument): boolean {
@@ -774,7 +765,6 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        const inactiveRanges = getInactivePreprocessorRanges(doc);
         const rangesByColor: vscode.Range[][] = nibbleDecorations.map(() => []);
 
         for (const span of collectHexDigitColorSpans(doc)) {
@@ -789,14 +779,6 @@ export function activate(context: vscode.ExtensionContext) {
         nibbleDecorations.forEach((decoration, index) => {
             editor.setDecorations(decoration, rangesByColor[index]);
         });
-
-        if (inactiveCodeDecoration) {
-            const inactiveVscodeRanges = inactiveRanges.map(range =>
-                new vscode.Range(doc.positionAt(range.start), doc.positionAt(range.end))
-            );
-
-            editor.setDecorations(inactiveCodeDecoration, inactiveVscodeRanges);
-        }
     }
 
     function updateActiveEditor(): void {
@@ -843,9 +825,7 @@ export function deactivate(): void {
         decoration.dispose();
     }
 
-    inactiveCodeDecoration?.dispose();
     disposeCopyDebugOutput();
 
     nibbleDecorations = [];
-    inactiveCodeDecoration = undefined;
 }
