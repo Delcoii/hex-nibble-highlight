@@ -11,6 +11,7 @@
 - Uses darker colors on light themes
 - Uses editor decorations only
 - Does not modify source files
+- **Rich copy (Windows):** Ctrl+C → Word/PowerPoint with syntax + nibble colors (C/C++).
 
 
 ## Notes
