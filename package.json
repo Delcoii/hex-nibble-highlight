@@ -3,7 +3,7 @@
   "displayName": "hex-nibble-highlight",
   "description": "Highlight hex literals by 4-digit(1byte)",
   "icon": "images/icon.png",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "Delcoii",
   "license": "MIT",
   "repository": {
@@ -33,10 +33,32 @@
     ],
     "commands": [
       {
+        "command": "hex-nibble-highlight.copyWithHighlight",
+        "title": "Copy with Hex Highlight (for PowerPoint/Word)"
+      },
+      {
         "command": "hex-nibble-highlight.helloWorld",
         "title": "Hello World"
       }
-    ]
+    ],
+    "keybindings": [
+      {
+        "command": "hex-nibble-highlight.copyWithHighlight",
+        "key": "ctrl+c",
+        "mac": "cmd+c",
+        "when": "editorTextFocus && config.hex-nibble-highlight.richCopy && (editorLangId == c || editorLangId == cpp || editorLangId == dat || resourceExtname == .dat)"
+      }
+    ],
+    "configuration": {
+      "title": "Hex Nibble Highlight",
+      "properties": {
+        "hex-nibble-highlight.richCopy": {
+          "type": "boolean",
+          "default": true,
+          "description": "Copy hex nibble colors to the clipboard (Windows: PowerPoint, Word, etc.). Uses Ctrl+C in C/C++/dat files."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

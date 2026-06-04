@@ -1,4 +1,10 @@
 import * as vscode from 'vscode';
+import {
+    clipboardSettleDelay,
+    patchCfHtmlHexColors,
+    readRichClipboardWithRetry,
+    writeRichClipboard,
+} from './richClipboard';
 
 let nibbleDecorations: vscode.TextEditorDecorationType[] = [];
 let inactiveCodeDecoration: vscode.TextEditorDecorationType | undefined;
@@ -15,8 +21,15 @@ type ConditionalFrame = {
     known: boolean;
 };
 
+type HexColorSpan = {
+    start: number;
+    end: number;
+    colorIndex: number;
+};
+
 
 export function activate(context: vscode.ExtensionContext) {
+    let nibbleColors: string[] = [];
     /*
     // bold setting...
     decorations = [
@@ -70,6 +83,8 @@ export function activate(context: vscode.ExtensionContext) {
                 '#87dc76', // Green for dark themes
                 '#AB9DF2'  // Purple for dark themes
             ];
+
+        nibbleColors = colors;
 
         nibbleDecorations = colors.map(color =>
             vscode.window.createTextEditorDecorationType({
@@ -575,38 +590,11 @@ export function activate(context: vscode.ExtensionContext) {
         return inactiveRanges;
     }
 
-    
-    function update(editor: vscode.TextEditor | undefined): void {
-        if (!editor) {
-            return;
-        }
-
-        const doc = editor.document;
-
-        if (!isSupportedDocument(doc)) {
-            clearDecorations(editor);
-            return;
-        }
-
+    function collectHexDigitColorSpans(doc: vscode.TextDocument): HexColorSpan[] {
         const text = doc.getText();
-        // const rangesByColor: vscode.Range[][] = decorations.map(() => []);
         const commentRanges = getCommentRanges(text);
         const inactiveRanges = getInactivePreprocessorRanges(doc);
-        const rangesByColor: vscode.Range[][] = nibbleDecorations.map(() => []);
-
-
-        /*
-        Matches hexadecimal integer literals.
-
-        Examples:
-            0x1234
-            0XDEADBEEF
-            0x12345678ULL
-            0xffff0000u
-
-        Group 1 contains only hexadecimal digits.
-        Group 2 contains an optional integer suffix.
-        */
+        const spans: HexColorSpan[] = [];
         const regex = /0[xX]([0-9a-fA-F]+)([uUlL]*)/g;
 
         let match: RegExpExecArray | null;
@@ -622,27 +610,96 @@ export function activate(context: vscode.ExtensionContext) {
             if (overlapsAnyRange(fullStartOffset, fullEndOffset, inactiveRanges)) {
                 continue;
             }
+
             const digits = match[1];
             const digitStartOffset = fullStartOffset + 2;
             const digitEndOffset = digitStartOffset + digits.length;
 
-
             let colorIndex = 0;
 
-            // Color hexadecimal digits in groups of four.
-            // The grouping starts from the right side.
             for (let end = digitEndOffset; end > digitStartOffset; end -= 4) {
                 const start = Math.max(digitStartOffset, end - 4);
 
-                const startPos = doc.positionAt(start);
-                const endPos = doc.positionAt(end);
-
-                rangesByColor[colorIndex % nibbleDecorations.length].push(
-                    new vscode.Range(startPos, endPos)
-                );
-
+                spans.push({ start, end, colorIndex });
                 colorIndex++;
             }
+        }
+
+        return spans;
+    }
+
+    function getCopyRanges(editor: vscode.TextEditor): vscode.Range[] {
+        return editor.selections.map(selection => {
+            if (!selection.isEmpty) {
+                return selection;
+            }
+
+            const line = editor.document.lineAt(selection.start.line);
+            return line.rangeIncludingLineBreak;
+        });
+    }
+
+    async function copyWithHighlight(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+
+        if (!editor || !isSupportedDocument(editor.document)) {
+            await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
+            return;
+        }
+
+        const richCopyEnabled = vscode.workspace
+            .getConfiguration('hex-nibble-highlight')
+            .get<boolean>('richCopy', true);
+
+        if (!richCopyEnabled) {
+            await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
+            return;
+        }
+
+        try {
+            await vscode.commands.executeCommand(
+                'editor.action.clipboardCopyWithSyntaxHighlightingAction'
+            );
+            await clipboardSettleDelay();
+
+            const clipboard = await readRichClipboardWithRetry();
+
+            if (!clipboard?.html) {
+                // Syntax copy already on clipboard; do not overwrite with plain/fallback.
+                return;
+            }
+
+            const patchedHtml = patchCfHtmlHexColors(clipboard.html, nibbleColors);
+
+            await writeRichClipboard(clipboard.plain || '', patchedHtml);
+        } catch (error) {
+            console.error('hex-nibble-highlight: rich clipboard failed', error);
+            await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
+        }
+    }
+
+    function update(editor: vscode.TextEditor | undefined): void {
+        if (!editor) {
+            return;
+        }
+
+        const doc = editor.document;
+
+        if (!isSupportedDocument(doc)) {
+            clearDecorations(editor);
+            return;
+        }
+
+        const inactiveRanges = getInactivePreprocessorRanges(doc);
+        const rangesByColor: vscode.Range[][] = nibbleDecorations.map(() => []);
+
+        for (const span of collectHexDigitColorSpans(doc)) {
+            rangesByColor[span.colorIndex % nibbleDecorations.length].push(
+                new vscode.Range(
+                    doc.positionAt(span.start),
+                    doc.positionAt(span.end)
+                )
+            );
         }
 
         nibbleDecorations.forEach((decoration, index) => {
@@ -665,6 +722,11 @@ export function activate(context: vscode.ExtensionContext) {
     updateActiveEditor();
 
     context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'hex-nibble-highlight.copyWithHighlight',
+            copyWithHighlight
+        ),
+
         vscode.window.onDidChangeActiveTextEditor(editor => {
             update(editor);
         }),
