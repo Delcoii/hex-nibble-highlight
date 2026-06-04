@@ -95,8 +95,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    function isSupportedLanguage(languageId: string): boolean {
-        return ['c', 'cpp'].includes(languageId);
+    function isSupportedDocument(doc: vscode.TextDocument): boolean {
+        if (['c', 'cpp', 'dat'].includes(doc.languageId)) {
+            return true;
+        }
+
+        return doc.fileName.toLowerCase().endsWith('.dat');
     }
 
     function getCommentRanges(text: string): OffsetRange[] {
@@ -579,7 +583,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         const doc = editor.document;
 
-        if (!isSupportedLanguage(doc.languageId)) {
+        if (!isSupportedDocument(doc)) {
             clearDecorations(editor);
             return;
         }

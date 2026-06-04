@@ -5,6 +5,7 @@
   "icon": "images/icon.png",
   "version": "0.0.2",
   "publisher": "Delcoii",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Delcoii/hex-nibble-highlight"
@@ -18,10 +19,18 @@
   ],
   "activationEvents": [
     "onLanguage:c",
-    "onLanguage:cpp"
+    "onLanguage:cpp",
+    "onLanguage:dat"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "dat",
+        "aliases": ["Data", "dat"],
+        "extensions": [".dat"]
+      }
+    ],
     "commands": [
       {
         "command": "hex-nibble-highlight.helloWorld",
