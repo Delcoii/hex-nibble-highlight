@@ -56,11 +56,6 @@
           "type": "boolean",
           "default": true,
           "description": "Copy hex nibble colors to the clipboard (Windows: PowerPoint, Word, etc.). Uses Ctrl+C in C/C++/dat files."
-        },
-        "hex-nibble-highlight.debugCopy": {
-          "type": "boolean",
-          "default": true,
-          "description": "Log rich-copy steps to Output panel (Hex Nibble Highlight). Set false to disable."
         }
       }
     }

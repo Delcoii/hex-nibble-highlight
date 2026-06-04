@@ -1,12 +1,6 @@
 import * as vscode from 'vscode';
-import { disposeCopyDebugOutput, logCopyDebug, showCopyDebugOutput } from './copyDebug';
 import {
     clipboardSettleDelay,
-    collectHexLiterals,
-    debugDumpClipboardToFile,
-    debugPasteAnchors,
-    debugVerifyWrittenClipboard,
-    htmlHasNibbleHexPatch,
     normalizePlainText,
     patchCfHtmlHexColors,
     readPlainTextWithRetry,
@@ -655,13 +649,9 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     async function copyWithHighlight(): Promise<void> {
-        logCopyDebug('--- copyWithHighlight start ---');
         const editor = vscode.window.activeTextEditor;
 
         if (!editor || !isSupportedDocument(editor.document)) {
-            logCopyDebug(
-                `skip: unsupported (editor=${Boolean(editor)} lang=${editor?.document.languageId ?? 'none'})`
-            );
             await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
             return;
         }
@@ -670,86 +660,37 @@ export function activate(context: vscode.ExtensionContext) {
             .getConfiguration('hex-nibble-highlight')
             .get<boolean>('richCopy', true);
 
-        logCopyDebug(
-            `lang=${editor.document.languageId} richCopy=${richCopyEnabled} nibbleColors=${nibbleColors.length} [${nibbleColors.join(', ')}]`
-        );
-
         if (!richCopyEnabled) {
-            logCopyDebug('richCopy disabled -> default copy');
             await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
             return;
-        }
-
-        if (nibbleColors.length === 0) {
-            logCopyDebug('WARN: nibbleColors empty');
         }
 
         try {
             await vscode.commands.executeCommand(
                 'editor.action.clipboardCopyWithSyntaxHighlightingAction'
             );
-            logCopyDebug('ran clipboardCopyWithSyntaxHighlightingAction');
             await clipboardSettleDelay();
 
             const clipboard = await readRichClipboardWithRetry();
             const plainRaw = clipboard?.plain || (await readPlainTextWithRetry());
             const plainText = normalizePlainText(plainRaw);
 
-            logCopyDebug(
-                `plain=${plainText.length} chars (raw ${plainRaw.length}) html=${clipboard?.html?.length ?? 0} literals=${collectHexLiterals(plainText).length}`
-            );
-
             if (clipboard?.html && plainText) {
                 const allowedLiterals = new Set(
                     collectActiveHexLiterals(editor.document)
                 );
-                debugPasteAnchors(
-                    clipboard.html,
-                    plainRaw || plainText,
-                    'VS Code clipboard (before patch)'
-                );
-
                 const patchedHtml = patchCfHtmlHexColors(
                     clipboard.html,
                     nibbleColors,
                     allowedLiterals
                 );
 
-                debugPasteAnchors(
-                    patchedHtml,
-                    plainRaw || plainText,
-                    'after patch (before write)'
-                );
-
                 await writeRichClipboard(plainRaw || plainText, patchedHtml);
-                logCopyDebug(
-                    `writeRichClipboard done hexInHtml=${htmlHasNibbleHexPatch(patchedHtml, nibbleColors)} htmlLen=${patchedHtml.length}`
-                );
-                await debugVerifyWrittenClipboard(
-                    patchedHtml.length,
-                    (plainRaw || plainText).length
-                );
-                await debugDumpClipboardToFile(patchedHtml, plainRaw || plainText);
-                showCopyDebugOutput();
                 return;
             }
-
-            if (plainText) {
-                logCopyDebug(
-                    'WARN: no HTML on clipboard — keeping VS Code syntax copy (hex colors not applied)'
-                );
-                showCopyDebugOutput();
-                return;
-            }
-
-            logCopyDebug('WARN: no plain text on clipboard');
-            showCopyDebugOutput();
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            logCopyDebug(`ERROR: ${message}`);
             console.error('hex-nibble-highlight: rich clipboard failed', error);
             await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
-            showCopyDebugOutput();
         }
     }
 
@@ -824,8 +765,6 @@ export function deactivate(): void {
     for (const decoration of nibbleDecorations) {
         decoration.dispose();
     }
-
-    disposeCopyDebugOutput();
 
     nibbleDecorations = [];
 }

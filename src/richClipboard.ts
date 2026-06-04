@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
-import { logCopyDebug } from './copyDebug';
 
 const execFileAsync = promisify(execFile);
 
@@ -181,201 +180,17 @@ function computeCfHtmlOffsets(layout: string): CfHtmlOffsets | null {
     };
 }
 
-function parseHeaderFields(header: string): Partial<Record<keyof CfHtmlOffsets, number>> {
-    const parsed: Partial<Record<keyof CfHtmlOffsets, number>> = {};
-
-    for (const { key, name } of HEADER_FIELD_MAP) {
-        const match = new RegExp(`^${name}:([\\d-]+)`, 'm').exec(header);
-
-        if (match) {
-            parsed[key] = parseInt(match[1], 10);
-        }
-    }
-
-    return parsed;
-}
-
-const PASTE_DEBUG_ANCHORS = [
-    'int main',
-    'const char *s1',
-    'const char *s2',
-    '0xDDDDDDDD',
-    'printf',
-    'return 0',
-] as const;
-
-function extractFragmentContent(cfHtml: string): string | null {
-    const start = cfHtml.indexOf(START_FRAGMENT);
-    const end = cfHtml.indexOf(END_FRAGMENT);
-
-    if (start === -1 || end === -1 || end <= start) {
-        return null;
-    }
-
-    return cfHtml.slice(start + START_FRAGMENT.length, end);
-}
-
-export function debugPasteAnchors(
-    cfHtml: string,
-    plain: string,
-    label: string
-): void {
-    const fragment = extractFragmentContent(cfHtml);
-    const plainNorm = plain.replace(/\r\n/g, '\n');
-
-    logCopyDebug(`--- paste anchors: ${label} ---`);
-
-    for (const anchor of PASTE_DEBUG_ANCHORS) {
-        const inPlain = plainNorm.includes(anchor);
-        const inHtml = cfHtml.includes(anchor);
-        const inFrag = fragment?.includes(anchor) ?? false;
-
-        logCopyDebug(
-            `anchor ${JSON.stringify(anchor)}: plain=${inPlain} html=${inHtml} fragment=${inFrag}`
-        );
-    }
-
-    const parts = splitCfHtmlAtHtml(cfHtml);
-
-    if (!parts) {
-        logCopyDebug(`${label}: no CF_HTML header split`);
-        return;
-    }
-
-    const parsed = parseHeaderFields(parts.header);
-    const layout = parts.header + parts.body;
-    const recomputed = computeCfHtmlOffsets(layout);
-    const buf = Buffer.from(cfHtml, 'utf8');
-    const total = buf.length;
-
-    logCopyDebug(
-        `${label}: totalBytes=${total} headerChars=${parts.header.length} bodyChars=${parts.body.length}`
-    );
-
-    for (const { key, name } of HEADER_FIELD_MAP) {
-        const headerVal = parsed[key];
-        const want = recomputed?.[key];
-
-        if (headerVal === undefined) {
-            continue;
-        }
-
-        const match =
-            want === undefined
-                ? 'no recompute'
-                : headerVal === want
-                  ? 'ok'
-                  : `BAD want ${want}`;
-
-        logCopyDebug(`${label} header ${name}=${headerVal} ${match}`);
-
-        if (headerVal >= 0 && headerVal < total) {
-            const slice = buf
-                .subarray(Math.max(0, headerVal - 30), Math.min(total, headerVal + 50))
-                .toString('utf8')
-                .replace(/\r/g, '\\r')
-                .replace(/\n/g, '\\n');
-
-            logCopyDebug(`${label} @${name}: ...${slice}...`);
-        } else if (headerVal >= total) {
-            logCopyDebug(
-                `${label} @${name}: OUT OF RANGE (offset ${headerVal} >= ${total}) — Office may truncate here`
-            );
-        }
-    }
-
-    if (fragment) {
-        debugSpanDepthNearAnchor(fragment, 'const char *s2', label);
-    }
-}
-
-function debugSpanDepthNearAnchor(
-    fragment: string,
-    anchor: string,
-    label: string
-): void {
-    const pos = fragment.indexOf(anchor);
-
-    if (pos === -1) {
-        logCopyDebug(`${label}: anchor ${JSON.stringify(anchor)} not in fragment`);
-        return;
-    }
-
-    const windowStart = Math.max(0, pos - 120);
-    const windowEnd = Math.min(fragment.length, pos + anchor.length + 200);
-    const window = fragment.slice(windowStart, windowEnd);
-    let depth = 0;
-    let minDepth = 0;
-    const tagRe = /<\/?span\b[^>]*>/gi;
-    let match: RegExpExecArray | null;
-
-    while ((match = tagRe.exec(window)) !== null) {
-        if (match[0].startsWith('</')) {
-            depth--;
-        } else {
-            depth++;
-        }
-
-        minDepth = Math.min(minDepth, depth);
-    }
-
-    const snippet = window.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
-
-    logCopyDebug(
-        `${label}: span depth near ${JSON.stringify(anchor)} depthEnd=${depth} minDepth=${minDepth} (want depthEnd=0)`
-    );
-    logCopyDebug(`${label}: window ${JSON.stringify(snippet.slice(0, 280))}`);
-}
-
-function debugValidateFragment(fragment: string, label: string): void {
-    const openSpan = (fragment.match(/<span\b/gi) ?? []).length;
-    const closeSpan = (fragment.match(/<\/span>/gi) ?? []).length;
-    const hasStart = fragment.includes(START_FRAGMENT);
-    const hasEnd = fragment.includes(END_FRAGMENT);
-
-    logCopyDebug(
-        `${label}: len=${fragment.length} spans ${openSpan}/${closeSpan} markers=${hasStart}/${hasEnd}`
-    );
-
-    if (openSpan !== closeSpan) {
-        logCopyDebug(`${label}: WARN unbalanced <span> (${openSpan} vs ${closeSpan})`);
-    }
-}
-
-/**
- * Patch numeric fields in the existing VS Code header (same byte length as layout).
- */
+/** Patch numeric fields in the existing VS Code CF_HTML header (same char length). */
 function recalculateCfHtmlHeader(cfHtml: string): string {
-    logCopyDebug(`recalculateCfHtmlHeader: in len=${cfHtml.length}`);
-
     const parts = splitCfHtmlAtHtml(cfHtml);
 
     if (!parts) {
-        logCopyDebug(
-            `recalculateCfHtmlHeader: FAIL no <html> prefix=${JSON.stringify(cfHtml.slice(0, 100))}`
-        );
         return cfHtml;
     }
 
-    const layout = parts.header + parts.body;
-    const beforeHeaderFields = parseHeaderFields(parts.header);
-
-    logCopyDebug(
-        `layout: headerChars=${parts.header.length} htmlStartByte=${byteIndexAt(layout, parts.htmlStart)} bodyChars=${parts.body.length}`
-    );
-
-    for (const { key, name } of HEADER_FIELD_MAP) {
-        const value = beforeHeaderFields[key];
-
-        if (value !== undefined) {
-            logCopyDebug(`header before ${name}=${value}`);
-        }
-    }
-
-    const offsets = computeCfHtmlOffsets(layout);
+    const offsets = computeCfHtmlOffsets(parts.header + parts.body);
 
     if (!offsets) {
-        logCopyDebug('recalculateCfHtmlHeader: FAIL computeCfHtmlOffsets');
         return cfHtml;
     }
 
@@ -384,159 +199,10 @@ function recalculateCfHtmlHeader(cfHtml: string): string {
     for (const { key, name } of HEADER_FIELD_MAP) {
         if (new RegExp(`^${name}:`, 'm').test(newHeader)) {
             newHeader = patchHeaderField(newHeader, name, offsets[key]);
-        } else {
-            logCopyDebug(`header field absent (skip): ${name}`);
         }
     }
 
-    if (newHeader.length !== parts.header.length) {
-        logCopyDebug(
-            `WARN: header char length changed ${parts.header.length} -> ${newHeader.length}`
-        );
-    }
-
-    const result = newHeader + parts.body;
-    const afterHeaderFields = parseHeaderFields(newHeader);
-
-    logCopyDebug(
-        `CF_HTML offsets computed: StartHTML=${offsets.startHtml} EndHTML=${offsets.endHtml} EndFragment=${offsets.endFragment} EndSelection=${offsets.endSelection} totalBytes=${byteIndexAt(result, result.length)}`
-    );
-
-    for (const { key, name } of HEADER_FIELD_MAP) {
-        const written = afterHeaderFields[key];
-
-        if (written !== undefined) {
-            const ok = written === offsets[key] ? 'ok' : `MISMATCH want ${offsets[key]}`;
-            logCopyDebug(`header after ${name}=${written} ${ok}`);
-        }
-    }
-
-    debugPeekBytesAtOffsets(result, offsets);
-
-    return result;
-}
-
-function debugPeekBytesAtOffsets(cfHtml: string, offsets: CfHtmlOffsets): void {
-    const buf = Buffer.from(cfHtml, 'utf8');
-    const total = buf.length;
-
-    const peek = (label: string, offset: number) => {
-        if (offset < 0 || offset >= total) {
-            logCopyDebug(`peek ${label}@${offset}: OUT OF RANGE (total=${total})`);
-            return;
-        }
-
-        const sample = buf
-            .subarray(offset, Math.min(offset + 40, total))
-            .toString('utf8')
-            .replace(/\r/g, '\\r')
-            .replace(/\n/g, '\\n');
-
-        logCopyDebug(`peek ${label}@${offset}: "${sample}"`);
-    };
-
-    peek('StartHTML', offsets.startHtml);
-    peek('EndHTML', offsets.endHtml - 20);
-    peek('EndFragment', offsets.endFragment);
-    peek('EndSelection', offsets.endSelection);
-}
-
-export async function debugDumpClipboardToFile(
-    cfHtml: string,
-    plain: string
-): Promise<string | null> {
-    const id = randomBytes(4).toString('hex');
-    const htmlPath = join(tmpdir(), `hex-nibble-debug-${id}.html`);
-    const plainPath = join(tmpdir(), `hex-nibble-debug-${id}.txt`);
-
-    try {
-        await writeFile(htmlPath, cfHtml, 'utf8');
-        await writeFile(plainPath, plain, 'utf8');
-        logCopyDebug(`debug dump: ${htmlPath}`);
-        logCopyDebug(`debug dump: ${plainPath}`);
-        return htmlPath;
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logCopyDebug(`debug dump failed: ${message}`);
-        return null;
-    }
-}
-
-export async function debugVerifyWrittenClipboard(
-    expectedHtmlLen: number,
-    expectedPlainLen: number
-): Promise<void> {
-    logCopyDebug('--- verify clipboard after write ---');
-
-    const read = await readRichClipboard();
-
-    if (!read) {
-        logCopyDebug('verify: readRichClipboard FAILED');
-        return;
-    }
-
-    logCopyDebug(
-        `verify: html=${read.html.length} (expected ${expectedHtmlLen}) plain=${read.plain.length} (expected ${expectedPlainLen})`
-    );
-
-    if (read.html.length !== expectedHtmlLen) {
-        logCopyDebug(
-            `verify: WARN html length mismatch delta=${read.html.length - expectedHtmlLen}`
-        );
-    }
-
-    const parts = splitCfHtmlAtHtml(read.html);
-
-    if (!parts) {
-        logCopyDebug('verify: no <html> in read-back HTML');
-        return;
-    }
-
-    const parsed = parseHeaderFields(parts.header);
-    const layout = parts.header + parts.body;
-    const recomputed = computeCfHtmlOffsets(layout);
-
-    for (const line of parts.header.split(/\r?\n/).filter(Boolean)) {
-        logCopyDebug(`verify header line: ${line}`);
-    }
-
-    if (recomputed) {
-        for (const { key, name } of HEADER_FIELD_MAP) {
-            const headerVal = parsed[key];
-            const want = recomputed[key];
-            const match =
-                headerVal === undefined
-                    ? 'missing'
-                    : headerVal === want
-                      ? 'ok'
-                      : `BAD (want ${want})`;
-            logCopyDebug(`verify ${name}: ${headerVal ?? 'n/a'} ${match}`);
-        }
-
-        debugPeekBytesAtOffsets(read.html, recomputed);
-    }
-
-    const fragStart = read.html.indexOf(START_FRAGMENT);
-    const fragEnd = read.html.indexOf(END_FRAGMENT);
-
-    if (fragStart !== -1 && fragEnd !== -1) {
-        const fragLen = fragEnd - fragStart - START_FRAGMENT.length;
-        logCopyDebug(`verify fragment content chars=${fragLen}`);
-        debugValidateFragment(
-            read.html.slice(fragStart, fragEnd + END_FRAGMENT.length),
-            'verify fragment'
-        );
-    }
-
-    const plainLines = read.plain.replace(/\r\n/g, '\n').split('\n');
-    logCopyDebug(
-        `verify plain: lines=${plainLines.length} lastLine=${JSON.stringify(plainLines.at(-1) ?? '')}`
-    );
-    logCopyDebug(
-        `verify plain tail: ${JSON.stringify(read.plain.slice(-120))}`
-    );
-
-    debugPasteAnchors(read.html, read.plain, 'clipboard read-back');
+    return newHeader + parts.body;
 }
 
 function spliceCfHtmlFragment(cfHtml: string, newFragment: string): string {
@@ -544,7 +210,6 @@ function spliceCfHtmlFragment(cfHtml: string, newFragment: string): string {
     const end = cfHtml.indexOf(END_FRAGMENT);
 
     if (start === -1 || end === -1 || end <= start) {
-        logCopyDebug('spliceCfHtmlFragment: missing fragment markers');
         return cfHtml;
     }
 
@@ -552,18 +217,12 @@ function spliceCfHtmlFragment(cfHtml: string, newFragment: string): string {
     const oldFragment = cfHtml.slice(contentStart, end);
 
     if (oldFragment === newFragment) {
-        logCopyDebug('spliceCfHtmlFragment: fragment unchanged, skip header');
         return cfHtml;
     }
 
-    const updated =
-        cfHtml.slice(0, contentStart) + newFragment + cfHtml.slice(end);
-
-    logCopyDebug(
-        `spliceCfHtmlFragment: cfHtml ${cfHtml.length} -> ${updated.length} (frag +${newFragment.length - oldFragment.length})`
+    return recalculateCfHtmlHeader(
+        cfHtml.slice(0, contentStart) + newFragment + cfHtml.slice(end)
     );
-
-    return recalculateCfHtmlHeader(updated);
 }
 
 /**
@@ -578,7 +237,6 @@ export function patchCfHtmlHexColors(
     const end = cfHtml.indexOf(END_FRAGMENT);
 
     if (start === -1 || end === -1 || end <= start) {
-        logCopyDebug('patchCfHtmlHexColors: no fragment markers');
         return patchHexColorsInHtmlTextNodes(cfHtml, nibbleColors, allowedLiterals);
     }
 
@@ -591,41 +249,10 @@ export function patchCfHtmlHexColors(
     );
 
     if (patchedFragment === fragment) {
-        logCopyDebug('patchCfHtmlHexColors: no hex matched in HTML text nodes');
         return cfHtml;
     }
 
-    logCopyDebug(
-        `patchCfHtmlHexColors: fragment ${fragment.length} -> ${patchedFragment.length}`
-    );
-
-    debugValidateFragment(fragment, 'fragment before');
-    debugValidateFragment(patchedFragment, 'fragment after');
-
-    logCopyDebug('patchCfHtmlHexColors: splice + recalculateCfHtmlHeader');
     return spliceCfHtmlFragment(cfHtml, patchedFragment);
-}
-
-export function htmlHasNibbleHexPatch(
-    html: string,
-    nibbleColors: string[]
-): boolean {
-    return (
-        html.includes('!important') &&
-        nibbleColors.some(color => html.includes(color))
-    );
-}
-
-export function collectHexLiterals(plainText: string): string[] {
-    const regex = /0[xX]([0-9a-fA-F]+)([uUlL]*)/g;
-    const literals: string[] = [];
-    let match: RegExpExecArray | null;
-
-    while ((match = regex.exec(plainText)) !== null) {
-        literals.push(match[0]);
-    }
-
-    return [...new Set(literals)];
 }
 
 export type ClipboardPayload = {
@@ -654,7 +281,6 @@ export async function readPlainTextWithRetry(
 
 export async function readRichClipboard(): Promise<ClipboardPayload | null> {
     if (process.platform !== 'win32') {
-        logCopyDebug('readRichClipboard: skipped (not win32)');
         return null;
     }
 
@@ -684,16 +310,12 @@ export async function readRichClipboard(): Promise<ClipboardPayload | null> {
         const lines = parseBase64StdoutLines(stdout);
 
         if (lines.length < 1) {
-            logCopyDebug(
-                `readRichClipboard: no base64 lines (stdout ${stdout.length} chars)`
-            );
             return null;
         }
 
         const html = Buffer.from(lines[0], 'base64').toString('utf8');
 
         if (!html) {
-            logCopyDebug('readRichClipboard: decoded html empty');
             return null;
         }
 
@@ -702,13 +324,8 @@ export async function readRichClipboard(): Promise<ClipboardPayload | null> {
                 ? Buffer.from(lines[1], 'base64').toString('utf8')
                 : '';
 
-        logCopyDebug(
-            `readRichClipboard: ok html=${html.length} plain=${plain.length}`
-        );
         return { html, plain };
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logCopyDebug(`readRichClipboard: error ${message}`);
+    } catch {
         return null;
     }
 }
@@ -769,14 +386,7 @@ export async function writeRichClipboard(
             { timeout: 15_000 }
         );
 
-        logCopyDebug(
-            `writeRichClipboard: ok via temp files (plain=${plainText.length} html=${cfHtml.length})`
-        );
         return true;
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logCopyDebug(`writeRichClipboard: error ${message}`);
-        throw error;
     } finally {
         await removeTempFile(plainPath);
         await removeTempFile(htmlPath);
@@ -792,7 +402,6 @@ export async function readRichClipboardWithRetry(
         const payload = await readRichClipboard();
 
         if (payload?.html) {
-            logCopyDebug(`readRichClipboardWithRetry: success attempt ${attempt + 1}`);
             return payload;
         }
 
@@ -801,7 +410,6 @@ export async function readRichClipboardWithRetry(
         }
     }
 
-    logCopyDebug(`readRichClipboardWithRetry: failed after ${attempts} attempts`);
     return null;
 }
 
