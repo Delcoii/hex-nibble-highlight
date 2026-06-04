@@ -63,6 +63,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
+    "package": "vsce package",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
@@ -75,6 +76,7 @@
     "typescript-eslint": "^8.56.1",
     "eslint": "^9.39.3",
     "typescript": "^5.9.3",
+    "@vscode/vsce": "^3.7.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2"
   }
