@@ -4,6 +4,9 @@ All notable changes to the "hex-nibble-highlight" extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+- Run as a UI extension (`extensionKind: ui`) so rich copy uses the local Windows clipboard over Remote SSH.
+
 ## [0.0.3] - 2026-06-04
 
 ### Added

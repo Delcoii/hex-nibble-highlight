@@ -3,7 +3,7 @@
   "displayName": "hex-nibble-highlight",
   "description": "Highlight hex literals by 4-digit(1byte)",
   "icon": "images/icon.png",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "publisher": "Delcoii",
   "license": "MIT",
   "repository": {
@@ -16,6 +16,9 @@
   },
   "categories": [
     "Other"
+  ],
+  "extensionKind": [
+    "ui"
   ],
   "activationEvents": [
     "onLanguage:c",
