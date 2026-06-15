@@ -15,5 +15,7 @@ node_modules/**
 *.vsix
 
 test.c
+test.asm
+test.dat
 out/extension copy.js
 out/test/**

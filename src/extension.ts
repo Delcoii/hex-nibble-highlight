@@ -29,6 +29,42 @@ type HexColorSpan = {
 };
 
 
+const SUPPORTED_LANGUAGE_IDS = new Set([
+    'c',
+    'cpp',
+    'dat',
+    'asm',
+    'asm-intel',
+    'gas',
+    'x86asm',
+]);
+
+const ASM_LANGUAGE_IDS = new Set(['asm', 'asm-intel', 'gas', 'x86asm']);
+
+const ASM_FILE_EXTENSIONS = ['.asm', '.s', '.inc'];
+
+function isAsmDocument(doc: vscode.TextDocument): boolean {
+    if (ASM_LANGUAGE_IDS.has(doc.languageId)) {
+        return true;
+    }
+
+    const lowerName = doc.fileName.toLowerCase();
+
+    return ASM_FILE_EXTENSIONS.some(ext => lowerName.endsWith(ext));
+}
+
+function isSupportedDocument(doc: vscode.TextDocument): boolean {
+    if (SUPPORTED_LANGUAGE_IDS.has(doc.languageId)) {
+        return true;
+    }
+
+    if (doc.fileName.toLowerCase().endsWith('.dat')) {
+        return true;
+    }
+
+    return isAsmDocument(doc);
+}
+
 export function activate(context: vscode.ExtensionContext) {
     let nibbleColors: string[] = [];
     const outputChannel = vscode.window.createOutputChannel('Hex Nibble Highlight');
@@ -106,15 +142,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     }
 
-    function isSupportedDocument(doc: vscode.TextDocument): boolean {
-        if (['c', 'cpp', 'dat'].includes(doc.languageId)) {
-            return true;
-        }
-
-        return doc.fileName.toLowerCase().endsWith('.dat');
-    }
-
-    function getCommentRanges(text: string): OffsetRange[] {
+    function getCStyleCommentRanges(text: string): OffsetRange[] {
         const ranges: OffsetRange[] = [];
 
         let i = 0;
@@ -225,6 +253,121 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         return ranges;
+    }
+
+    /** `;` anywhere; `#` only at line start (GNU). ARM `#0x` immediates stay active. */
+    function getAsmCommentRanges(text: string): OffsetRange[] {
+        const ranges: OffsetRange[] = [];
+
+        let i = 0;
+        let state: 'normal' | 'string' | 'lineComment' | 'blockComment' = 'normal';
+        let commentStart = -1;
+        let atLineStart = true;
+
+        while (i < text.length) {
+            const current = text[i];
+            const next = i + 1 < text.length ? text[i + 1] : '';
+
+            if (current === '\n') {
+                atLineStart = true;
+            }
+
+            if (state === 'normal') {
+                if (atLineStart && (current === ' ' || current === '\t')) {
+                    i++;
+                    continue;
+                }
+
+                if (current === '"') {
+                    atLineStart = false;
+                    state = 'string';
+                    i++;
+                    continue;
+                }
+
+                if (current === ';') {
+                    atLineStart = false;
+                    state = 'lineComment';
+                    commentStart = i;
+                    i++;
+                    continue;
+                }
+
+                if (atLineStart && current === '#') {
+                    state = 'lineComment';
+                    commentStart = i;
+                    i++;
+                    continue;
+                }
+
+                if (current === '/' && next === '*') {
+                    atLineStart = false;
+                    state = 'blockComment';
+                    commentStart = i;
+                    i += 2;
+                    continue;
+                }
+
+                if (current !== ' ' && current !== '\t' && current !== '\n') {
+                    atLineStart = false;
+                }
+
+                i++;
+                continue;
+            }
+
+            if (state === 'string') {
+                if (current === '\\') {
+                    i += 2;
+                    continue;
+                }
+
+                if (current === '"') {
+                    state = 'normal';
+                }
+
+                i++;
+                continue;
+            }
+
+            if (state === 'lineComment') {
+                if (current === '\n') {
+                    ranges.push({ start: commentStart, end: i });
+                    state = 'normal';
+                    commentStart = -1;
+                }
+
+                i++;
+                continue;
+            }
+
+            if (state === 'blockComment') {
+                if (current === '*' && next === '/') {
+                    ranges.push({ start: commentStart, end: i + 2 });
+                    state = 'normal';
+                    commentStart = -1;
+                    i += 2;
+                    continue;
+                }
+
+                i++;
+                continue;
+            }
+        }
+
+        if (state === 'lineComment' || state === 'blockComment') {
+            ranges.push({ start: commentStart, end: text.length });
+        }
+
+        return ranges;
+    }
+
+    function getCommentRanges(text: string, doc: vscode.TextDocument): OffsetRange[] {
+        if (isAsmDocument(doc)) {
+            return getAsmCommentRanges(text);
+        }
+
+        return getCStyleCommentRanges(text);
     }
 
     function overlapsAnyRange(start: number, end: number, ranges: OffsetRange[]): boolean {
@@ -588,7 +731,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     function collectHexDigitColorSpans(doc: vscode.TextDocument): HexColorSpan[] {
         const text = doc.getText();
-        const commentRanges = getCommentRanges(text);
+        const commentRanges = getCommentRanges(text, doc);
         const inactiveRanges = getInactivePreprocessorRanges(doc);
         const spans: HexColorSpan[] = [];
         const regex = /0[xX]([0-9a-fA-F]+)([uUlL]*)/g;
@@ -626,7 +769,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     function collectActiveHexLiterals(doc: vscode.TextDocument): string[] {
         const text = doc.getText();
-        const commentRanges = getCommentRanges(text);
+        const commentRanges = getCommentRanges(text, doc);
         const inactiveRanges = getInactivePreprocessorRanges(doc);
         const literals: string[] = [];
         const regex = /0[xX]([0-9a-fA-F]+)([uUlL]*)/g;

@@ -23,7 +23,11 @@
   "activationEvents": [
     "onLanguage:c",
     "onLanguage:cpp",
-    "onLanguage:dat"
+    "onLanguage:dat",
+    "onLanguage:asm",
+    "onLanguage:asm-intel",
+    "onLanguage:gas",
+    "onLanguage:x86asm"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -49,7 +53,7 @@
         "command": "hex-nibble-highlight.copyWithHighlight",
         "key": "ctrl+c",
         "mac": "cmd+c",
-        "when": "editorTextFocus && config.hex-nibble-highlight.richCopy && (editorLangId == c || editorLangId == cpp || editorLangId == dat || resourceExtname == .dat)"
+        "when": "editorTextFocus && config.hex-nibble-highlight.richCopy && (editorLangId == c || editorLangId == cpp || editorLangId == dat || editorLangId == asm || editorLangId == asm-intel || editorLangId == gas || editorLangId == x86asm || resourceExtname == .dat || resourceExtname == .asm || resourceExtname == .s || resourceExtname == .S)"
       }
     ],
     "configuration": {
@@ -58,7 +62,7 @@
         "hex-nibble-highlight.richCopy": {
           "type": "boolean",
           "default": true,
-          "description": "Copy hex nibble colors to the clipboard (Windows: PowerPoint, Word, etc.). Uses Ctrl+C in C/C++/dat files."
+          "description": "Copy hex nibble colors to the clipboard (Windows: PowerPoint, Word, etc.). Uses Ctrl+C in C/C++/assembly/dat files."
         }
       }
     }
